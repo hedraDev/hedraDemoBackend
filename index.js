@@ -15,7 +15,7 @@ app.use(cors());
 app.use(bodyParser.json());
 
 // MongoDB Connection
-const mongoURI = process.env.mongoURI;
+const mongoURI = "mongodb+srv://hedrasoftwaredev:xymQBbSxhhMQWuL8@cluster0.uatrs.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 if (!mongoURI) {
   console.error('Error: MONGO_URI is not defined in the environment variables.');
   process.exit(1);
