@@ -1,0 +1,59 @@
+{
+  "system": {
+    "version": "2.0.0",
+    "company_name": "HEDRA",
+    "test_system_name": "STM32L011 Test Sistemi"
+  },
+  "hardware": {
+    "firmware_path": "./firmware/stm32l011_firmware.hex",
+    "stm32_target": "stm32l011f4",
+    "ppk2_voltage": 3000,
+    "pyocd_frequency": 1000000
+  },
+  "ble": {
+    "uart_service_uuid": "6E400001-B5A3-F393-E0A9-E50E24DCCA9E",
+    "tx_char_uuid": "6E400002-B5A3-F393-E0A9-E50E24DCCA9E",
+    "rx_char_uuid": "6E400003-B5A3-F393-E0A9-E50E24DCCA9E",
+    "scan_timeout": 10.0,
+    "connection_timeout": 30.0,
+    "measurement_timeout": 15.0
+  },
+  "camera": {
+    "width": 640,
+    "height": 480,
+    "fps": 30,
+    "preview_refresh_ms": 30
+  },
+  "database": {
+    "mongodb_uri": "mongodb://localhost:27017/",
+    "db_name": "stm32_test_db",
+    "collection_name": "test_results",
+    "backup_enabled": true
+  },
+  "paths": {
+    "logs": "./logs",
+    "photos": "./photos",
+    "backup": "./backup",
+    "firmware": "./firmware",
+    "reports": "./reports",
+    "sounds": "./sounds"
+  },
+  "ui": {
+    "theme": "modern_blue",
+    "enable_animations": true,
+    "enable_sounds": true,
+    "window_width": 1600,
+    "window_height": 1000
+  },
+  "timeouts": {
+    "stage_timeout": 300,
+    "retry_attempts": 3,
+    "retry_delay": 2
+  },
+  "logging": {
+    "level": "INFO",
+    "max_file_size_mb": 10,
+    "backup_count": 5,
+    "console_output": true
+  }
+}

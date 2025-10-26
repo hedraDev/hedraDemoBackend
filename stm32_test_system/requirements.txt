@@ -1,0 +1,10 @@
+PyQt5==5.15.10
+numpy==1.24.3
+pymongo==4.6.1
+opencv-python==4.8.1.78
+bleak==0.21.1
+pyocd==0.36.0
+reportlab==4.0.7
+matplotlib==3.8.2
+pillow==10.1.0
+python-dateutil==2.8.2
