@@ -65,6 +65,7 @@ from config_manager import get_config
 from database_manager import DatabaseManager
 from report_generator import ReportGenerator
 from sound_manager import get_sound_manager
+from barcode_reader import read_barcode_card, OperatorDatabase
 
 
 # Global değişkenler
@@ -711,12 +712,14 @@ class TestWindow(QMainWindow):
         self.logger = get_logger()
         self.sound_manager = get_sound_manager()
 
-        # Operatör bilgisi
-        self.operator_info = self.get_operator_login()
-        if not self.operator_info:
-            sys.exit(0)  # Giriş iptal edildi
+        # Operatör veritabanı
+        self.operator_db = OperatorDatabase()
 
-        self.logger.info(f"Operatör girişi: {self.operator_info['name']} ({self.operator_info['id']})")
+        # Operatör bilgisi (başlangıçta opsiyonel)
+        self.operator_info = None
+        self.operator_label = None  # UI'da gösterilecek
+
+        self.logger.info("Test sistemi başlatılıyor (Operatör girişi bekleniyor)")
 
         # Veritabanı
         self.db_manager = DatabaseManager(
@@ -762,15 +765,83 @@ class TestWindow(QMainWindow):
 
         self.logger.info("Test sistemi başlatıldı")
 
-    def get_operator_login(self):
-        """Operatör girişi al"""
-        dialog = OperatorLoginDialog(self)
-        if dialog.exec_() == QDialog.Accepted:
-            return {
-                'name': dialog.operator_name,
-                'id': dialog.operator_id
-            }
-        return None
+    def operator_login(self):
+        """Operatör oturum açma (Barcode ile)"""
+        operator = read_barcode_card(parent=self, operator_db=self.operator_db)
+
+        if operator:
+            self.operator_info = operator
+            self.update_operator_ui()
+            self.logger.info(f"Operatör girişi: {operator['name']} ({operator.get('barcode', 'N/A')})")
+            QMessageBox.information(
+                self, "Başarılı",
+                f"Hoş geldiniz, {operator['name']}!"
+            )
+        else:
+            QMessageBox.warning(self, "İptal", "Giriş iptal edildi.")
+
+    def operator_change(self):
+        """Operatör değiştir"""
+        reply = QMessageBox.question(
+            self, 'Operatör Değiştir',
+            'Mevcut operatör oturumunu kapatıp yeni operatör girişi yapmak istiyor musunuz?',
+            QMessageBox.Yes | QMessageBox.No
+        )
+
+        if reply == QMessageBox.Yes:
+            old_operator = self.operator_info['name'] if self.operator_info else 'Bilinmeyen'
+            self.operator_login()
+            if self.operator_info:
+                self.logger.info(f"Operatör değiştirildi: {old_operator} -> {self.operator_info['name']}")
+
+    def operator_logout(self):
+        """Operatör oturumu kapat"""
+        if not self.operator_info:
+            QMessageBox.information(self, "Bilgi", "Zaten oturum açılmamış.")
+            return
+
+        reply = QMessageBox.question(
+            self, 'Oturum Kapat',
+            f'{self.operator_info["name"]} için oturumu kapatmak istediğinize emin misiniz?',
+            QMessageBox.Yes | QMessageBox.No
+        )
+
+        if reply == QMessageBox.Yes:
+            self.logger.info(f"Operatör oturumu kapatıldı: {self.operator_info['name']}")
+            self.operator_info = None
+            self.update_operator_ui()
+            QMessageBox.information(self, "Başarılı", "Oturum kapatıldı.")
+
+    def update_operator_ui(self):
+        """Operatör UI'sını güncelle"""
+        if self.operator_info:
+            # Oturum açık
+            operator_text = f"Operatör:\n{self.operator_info['name']}"
+            self.operator_label.setText(operator_text)
+            self.operator_label.setStyleSheet("""
+                font-size: 14px;
+                color: #1B5E20;
+                padding: 10px;
+                background-color: #C8E6C9;
+                border-radius: 8px;
+                border: 2px solid #4CAF50;
+                font-weight: bold;
+            """)
+            if hasattr(self, 'status_bar'):
+                self.status_bar.showMessage(f"Operatör: {self.operator_info['name']}")
+        else:
+            # Oturum kapalı
+            self.operator_label.setText("Operatör:\nGiriş Yapılmadı")
+            self.operator_label.setStyleSheet("""
+                font-size: 14px;
+                color: #555;
+                padding: 10px;
+                background-color: #FFEBEE;
+                border-radius: 8px;
+                border: 2px solid #EF5350;
+            """)
+            if hasattr(self, 'status_bar'):
+                self.status_bar.showMessage("Operatör girişi yapılmadı")
 
     def init_ui(self):
         """UI'yi oluştur"""
@@ -820,7 +891,7 @@ class TestWindow(QMainWindow):
         # Status bar
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage(f"Operatör: {self.operator_info['name']}")
+        self.status_bar.showMessage("Operatör girişi yapılmadı")
 
         # Stil uygula
         self.apply_theme()
@@ -848,6 +919,23 @@ class TestWindow(QMainWindow):
         stats_action = QAction('&İstatistikler', self)
         stats_action.triggered.connect(self.show_statistics)
         view_menu.addAction(stats_action)
+
+        # Operatör menüsü
+        operator_menu = menubar.addMenu('&Operatör')
+
+        login_action = QAction('🔖 &Oturum Aç (Kart Okut)', self)
+        login_action.triggered.connect(self.operator_login)
+        operator_menu.addAction(login_action)
+
+        change_action = QAction('🔄 Operatör &Değiştir', self)
+        change_action.triggered.connect(self.operator_change)
+        operator_menu.addAction(change_action)
+
+        operator_menu.addSeparator()
+
+        logout_action = QAction('🚪 Oturum &Kapat', self)
+        logout_action.triggered.connect(self.operator_logout)
+        operator_menu.addAction(logout_action)
 
         # Ayarlar menüsü
         settings_menu = menubar.addMenu('&Ayarlar')
@@ -903,16 +991,17 @@ class TestWindow(QMainWindow):
         header_layout.addWidget(title_label, 1)
 
         # Operatör bilgisi
-        operator_label = QLabel(f"Operatör:\n{self.operator_info['name']}")
-        operator_label.setAlignment(Qt.AlignCenter)
-        operator_label.setStyleSheet("""
+        self.operator_label = QLabel("Operatör:\nGiriş Yapılmadı")
+        self.operator_label.setAlignment(Qt.AlignCenter)
+        self.operator_label.setStyleSheet("""
             font-size: 14px;
             color: #555;
             padding: 10px;
-            background-color: #E3F2FD;
+            background-color: #FFEBEE;
             border-radius: 8px;
+            border: 2px solid #EF5350;
         """)
-        header_layout.addWidget(operator_label)
+        header_layout.addWidget(self.operator_label)
 
         # Çıkış butonu
         exit_btn = QPushButton("ÇIKIŞ")
@@ -1158,6 +1247,25 @@ class TestWindow(QMainWindow):
             self.update_log(f"❌ Kamera hatası: {str(e)}")
             self.logger.error(f"Kamera hatası: {str(e)}")
 
+        # Başlangıç mesajları
+        QTimer.singleShot(500, self.show_welcome_messages)
+
+    def show_welcome_messages(self):
+        """Karşılama mesajlarını göster"""
+        self.update_log("\n" + "="*70)
+        self.update_log("🎯 STM32L011 TEST SİSTEMİ HAZIR")
+        self.update_log("="*70)
+        self.update_log("")
+        self.update_log("⚠️  ÖNEMLI: Test başlatmak için önce operatör girişi yapmalısınız!")
+        self.update_log("")
+        self.update_log("📌 Operatör Girişi:")
+        self.update_log("   1️⃣  Menü → Operatör → Oturum Aç")
+        self.update_log("   2️⃣  Kimlik kartınızı USB barcode okuyucuya okutun")
+        self.update_log("   3️⃣  Veya manuel giriş yapın")
+        self.update_log("")
+        self.update_log("🚀 Giriş yaptıktan sonra ENTER tuşu ile test başlatabilirsiniz")
+        self.update_log("="*70)
+
     def update_camera_preview(self):
         """Kamera önizlemesini güncelle"""
         try:
@@ -1221,11 +1329,24 @@ class TestWindow(QMainWindow):
 
     def start_test(self):
         """Testi başlat"""
+        # Operatör kontrolü
+        if not self.operator_info:
+            QMessageBox.warning(
+                self,
+                "Operatör Girişi Gerekli",
+                "Test başlatmak için önce operatör girişi yapmalısınız!\n\n"
+                "Menü → Operatör → Oturum Aç"
+            )
+            self.update_log("❌ Test başlatılamadı: Operatör girişi yapılmadı")
+            self.sound_manager.play_error()
+            return
+
         self.current_stage = 1
         self.update_stage_ui(1)
 
         self.update_log("✅ TEST BAŞLATILDI")
-        self.logger.stage(1, "Test başlatıldı")
+        self.update_log(f"   Operatör: {self.operator_info['name']}")
+        self.logger.stage(1, f"Test başlatıldı (Operatör: {self.operator_info['name']})")
         self.update_big_status("SOKET TAKMA BEKLENİYOR", "warning")
         self.update_log("⚠️ Test soketini takın")
         self.update_log("📌 ENTER tuşuna basın")
