@@ -566,18 +566,48 @@ class TestWorker(QThread):
             if self.hex_file_path and os.path.exists(self.hex_file_path):
                 self.update_signal.emit(f"  Hex dosyası: {os.path.basename(self.hex_file_path)}")
 
-                # PyOCD ile yükleme
+                # PyOCD ile yükleme - Birden fazla target tipi dene
                 try:
-                    target = self.config.get('hardware', 'stm32_target', default='stm32l011f4')
-                    result = subprocess.run(
-                        ["pyocd", "flash", "-t", target, self.hex_file_path],
-                        capture_output=True,
-                        text=True,
-                        timeout=60
-                    )
-                    if result.returncode != 0:
-                        self.update_signal.emit(f"  Flash uyarı: {result.stderr}")
-                        self.logger.warning(f"Flash uyarı: {result.stderr}")
+                    # Alternatif target tipleri (öncelik sırasına göre)
+                    target_types = [
+                        self.config.get('hardware', 'stm32_target', default='stm32l011f4'),
+                        'cortex_m0',  # STM32L011 Cortex-M0+ tabanlı
+                        'cortex_m'    # Genel Cortex-M
+                    ]
+
+                    flash_success = False
+                    last_error = ""
+
+                    for target in target_types:
+                        self.update_signal.emit(f"  Target tipi deneniyor: {target}")
+                        result = subprocess.run(
+                            ["pyocd", "flash", "-t", target, self.hex_file_path],
+                            capture_output=True,
+                            text=True,
+                            timeout=60
+                        )
+
+                        if result.returncode == 0:
+                            self.update_signal.emit(f"  ✅ Flash başarılı (target: {target})")
+                            self.logger.info(f"Firmware yüklendi - target: {target}")
+                            flash_success = True
+                            break
+                        else:
+                            last_error = result.stderr
+                            if "not recognized" in last_error.lower():
+                                self.logger.warning(f"Target '{target}' tanınmadı, sonraki deneniyor...")
+                                continue
+                            else:
+                                # Başka bir hata varsa logla ama devam et
+                                self.logger.warning(f"Flash uyarı ({target}): {last_error}")
+
+                    if not flash_success:
+                        self.update_signal.emit("  ⚠️ Flash tüm target tiplerinde başarısız!")
+                        self.update_signal.emit("  💡 Çözüm: pyocd pack install stm32l0")
+                        self.logger.error(f"Flash başarısız. Son hata: {last_error}")
+                        # Flash başarısız ama teste devam et (simülasyon modu)
+                        self.update_signal.emit("  📝 Simülasyon modunda devam ediliyor...")
+
                 except subprocess.TimeoutExpired:
                     self.update_signal.emit("  Flash timeout!")
                     self.logger.error("Flash timeout")
