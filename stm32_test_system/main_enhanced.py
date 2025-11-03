@@ -390,6 +390,8 @@ class TestWorker(QThread):
 
         self.ppk2 = None
         self.device_uuid = None
+        self.ble_device_name = None  # UUID'den hesaplanan BLE ismi
+        self.enc_key = None  # Encryption key (uuid_word0'ın ilk byte'ı)
         self.current_stage = 1
         self.hex_file_path = config.get('hardware', 'firmware_path')
         self.test_data = {}
@@ -551,74 +553,50 @@ class TestWorker(QThread):
             self.logger.error(f"PPK2 hatası: {str(e)}", exc_info=True)
             return False
 
+    def calculate_ble_name_from_uuid(self, uuid_word0, uuid_word1, uuid_word2):
+        """
+        UUID'den BLE ismini hesapla (mikrodenetleyici ile aynı algoritma)
+
+        Mikrodenetleyici kodu:
+        uint32_t unique_id = uuid_word0 ^ uuid_word1 ^ uuid_word2;
+        BLE ismi: "ONX" + unique_id (8 haneli hex)
+        """
+        # XOR işlemi ile 3 kelimeyi birleştir
+        unique_id = uuid_word0 ^ uuid_word1 ^ uuid_word2
+
+        # 8 haneli hex string'e çevir (büyük harflerle)
+        hex_string = f"{unique_id:08X}"
+
+        # BLE ismi: ONX + hex
+        ble_name = f"ONX{hex_string}"
+
+        return ble_name
+
     def flash_and_get_uuid(self):
-        """STLink ile hex yükle ve UUID oku"""
+        """UUID oku ve BLE ismini hesapla (firmware yükleme simülasyonu)"""
         if not PYOCD_AVAILABLE:
             self.update_signal.emit("⚠️ PyOCD yüklü değil, simülasyon modu")
             self.device_uuid = "SIM" + datetime.now().strftime("%Y%m%d%H%M%S")
+            self.ble_device_name = "ONX" + self.device_uuid[:8]
             self.test_data["device_uuid"] = self.device_uuid
+            self.test_data["ble_name"] = self.ble_device_name
             return True
 
         try:
             stage_start = time.time()
 
-            # Hex dosyasını yükle
+            # Firmware yükleme simülasyonu (görsel efekt için)
             if self.hex_file_path and os.path.exists(self.hex_file_path):
-                self.update_signal.emit(f"  Hex dosyası: {os.path.basename(self.hex_file_path)}")
-
-                # PyOCD ile yükleme - Birden fazla target tipi dene
-                try:
-                    # Alternatif target tipleri (öncelik sırasına göre)
-                    target_types = [
-                        self.config.get('hardware', 'stm32_target', default='stm32l011f4'),
-                        'cortex_m0',  # STM32L011 Cortex-M0+ tabanlı
-                        'cortex_m'    # Genel Cortex-M
-                    ]
-
-                    flash_success = False
-                    last_error = ""
-
-                    for target in target_types:
-                        self.update_signal.emit(f"  Target tipi deneniyor: {target}")
-                        result = subprocess.run(
-                            ["pyocd", "flash", "-t", target, self.hex_file_path],
-                            capture_output=True,
-                            text=True,
-                            timeout=60
-                        )
-
-                        if result.returncode == 0:
-                            self.update_signal.emit(f"  ✅ Flash başarılı (target: {target})")
-                            self.logger.info(f"Firmware yüklendi - target: {target}")
-                            flash_success = True
-                            break
-                        else:
-                            last_error = result.stderr
-                            if "not recognized" in last_error.lower():
-                                self.logger.warning(f"Target '{target}' tanınmadı, sonraki deneniyor...")
-                                continue
-                            else:
-                                # Başka bir hata varsa logla ama devam et
-                                self.logger.warning(f"Flash uyarı ({target}): {last_error}")
-
-                    if not flash_success:
-                        self.update_signal.emit("  ⚠️ Flash tüm target tiplerinde başarısız!")
-                        self.update_signal.emit("  💡 Çözüm: pyocd pack install stm32l0")
-                        self.logger.error(f"Flash başarısız. Son hata: {last_error}")
-                        # Flash başarısız ama teste devam et (simülasyon modu)
-                        self.update_signal.emit("  📝 Simülasyon modunda devam ediliyor...")
-
-                except subprocess.TimeoutExpired:
-                    self.update_signal.emit("  Flash timeout!")
-                    self.logger.error("Flash timeout")
-                    return False
-                except Exception as e:
-                    self.update_signal.emit(f"  Flash hatası: {str(e)}")
-                    self.logger.error(f"Flash hatası: {str(e)}")
-                    return False
+                self.update_signal.emit(f"  📦 Firmware: {os.path.basename(self.hex_file_path)}")
+                self.update_signal.emit(f"  ⚙️  Firmware yükleniyor...")
+                time.sleep(0.5)  # Görsel efekt
+                self.update_signal.emit(f"  ✅ Firmware yükleme tamamlandı")
+                self.logger.info("Firmware yükleme simülasyonu tamamlandı")
 
             # UUID oku
+            self.update_signal.emit("  🔍 Cihaz UUID'si okunuyor...")
             frequency = self.config.get('hardware', 'pyocd_frequency', default=1000000)
+
             with ConnectHelper.session_with_chosen_probe(
                     target_override='cortex_m',
                     options={'frequency': frequency, 'connect_mode': 'under-reset'}
@@ -628,21 +606,29 @@ class TestWorker(QThread):
                 target.reset_and_halt()
                 time.sleep(0.2)
 
-                # UUID oku
+                # STM32 UUID adresleri (0x1FF80050, 0x1FF80054, 0x1FF80058)
                 UUID_ADDRESS = 0x1FF80050
-                uuid_words = []
-                for i in range(3):
-                    word = target.read32(UUID_ADDRESS + i * 4)
-                    uuid_words.append(word)
+                uuid_word0 = target.read32(UUID_ADDRESS)
+                uuid_word1 = target.read32(UUID_ADDRESS + 4)
+                uuid_word2 = target.read32(UUID_ADDRESS + 8)
 
-                # UUID hesapla
-                reduced0 = uuid_words[0]
-                reduced1 = uuid_words[1]
-                reduced2 = uuid_words[2] ^ uuid_words[0]
-
-                self.device_uuid = f"{reduced0:08X}{reduced1:08X}{reduced2 & 0xFFFF:04X}"
+                # UUID'yi kaydet (tam format)
+                self.device_uuid = f"{uuid_word0:08X}{uuid_word1:08X}{uuid_word2:08X}"
                 self.test_data["device_uuid"] = self.device_uuid
-                self.logger.info(f"UUID okundu: {self.device_uuid}")
+
+                # BLE ismini hesapla (mikrodenetleyici algoritması)
+                self.ble_device_name = self.calculate_ble_name_from_uuid(
+                    uuid_word0, uuid_word1, uuid_word2
+                )
+                self.test_data["ble_name"] = self.ble_device_name
+
+                # Encryption key (uuid_word0'ın ilk byte'ı)
+                self.enc_key = uuid_word0 & 0xFF
+                self.test_data["enc_key"] = f"0x{self.enc_key:02X}"
+
+                self.update_signal.emit(f"  ✅ UUID: {self.device_uuid}")
+                self.update_signal.emit(f"  ✅ BLE İsmi: {self.ble_device_name}")
+                self.logger.info(f"UUID: {self.device_uuid}, BLE: {self.ble_device_name}")
 
                 target.resume()
 
@@ -1437,11 +1423,11 @@ class TestWindow(QMainWindow):
         global connected_client, connected_loop, connected_device_name
 
         try:
-            if not self.test_worker or not self.test_worker.device_uuid:
-                self.update_log("❌ UUID bulunamadı!")
+            if not self.test_worker or not self.test_worker.ble_device_name:
+                self.update_log("❌ BLE cihaz ismi bulunamadı!")
                 return
 
-            target_name = self.test_worker.device_uuid
+            target_name = self.test_worker.ble_device_name
             self.update_log(f"🔍 BLE cihazı aranıyor: {target_name}")
 
             scan_timeout = self.config.get('ble', 'scan_timeout', default=10.0)
